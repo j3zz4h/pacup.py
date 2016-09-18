@@ -1,76 +1,48 @@
 #!/usr/bin/env python3
-############################################
-#
-#   Update pacman mirrorlist. Rotate current
-#   list to "mirrorlist.old" removing backup
-#   if one already exists. And place new
-#   list in place.
-#
+#########################################################
+# Update pacman mirrorlist.
 
 import os
-import sys
-import re
-import subprocess
 import urllib.request
+import subprocess
 
-# Set alias' for files to be used
-NEW_LIST = "/etc/pacman.d/mirrorlist.new"
-MAIN_LIST = "/etc/pacman.d/mirrorlist"
-OLD_LIST = "/etc/pacman.d/mirrorlist.old"
-TEMP_LIST_1 = "/tmp/pacman-mirrorlist-update.tmp"
-TEMP_LIST_2 = "/tmp/pacman-mirrorlist-update_second-file.tmp."
+server_list_url = "https://www.archlinux.org/mirrorlist/?country=US&protocol=http&protocol=https&ip_version=4&ip_version=6"
+main_mirror_list = "/etc/pacman.d/mirrorlist"
+old_mirror_list = "/etc/pacman.d/mirrorlist.old"
 
-# If not root exit
+# If not user root exit
 testUser = os.getuid()
 if testUser != 0:
-    print("Must be run as root" '\n')
-    sys.exit()
+    print("Must be run as root")
+    quit()
 
-# Emulates linux "cat" command
-def cat(openfile):
-   with open(openfile) as file:
-     return file.read()
+# Download the new server list
+with urllib.request.urlopen(server_list_url) as response:
+  html = response.read()
+  mirror_list = html.decode()
 
-print("Downloading new list..." '\n')
-urllib.request.urlretrieve("https://www.archlinux.org/mirrorlist/?country=US&protocol=http&ip_version=4", TEMP_LIST_1)
+# Count lines containing "http" as basic sanity test
+number_of_servers = mirror_list.count("http")
+if number_of_servers <= 10:
+  print("There was a problem downloading the new server list... quitting")
+  quit()
 
-# Count lines of downloaded mirror list, if less than 20 download is corrupt
-numLines = sum(1 for line in open(TEMP_LIST_1))
-if numLines < 20:
-    print("There was an error downloading the mirrorlsit" '\n')
-    sys.exit()
-else:
-    print("Download seems to have gone well" '\n')
-#print(numLines) ## Testing - print line count of downloaded mirror list file
+# Format the downloaded server list for use on the system
+mirror_list = mirror_list.replace("#Server", "Server")
 
-#print(cat(TEMP_LIST_1)) ## Testing -- print downloaded mirror list file
+# Run rankmirrors to get best 6 servers
+print("Ranking mirrors for speed. This will take a few minutes.")
+run_proc = subprocess.Popen(['rankmirrors', '-n', '6', '-'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, universal_newlines=True)
+mirror_list, _ = run_proc.communicate(mirror_list)
 
-# Remove leading '#' from each line of downloaded file
-print("Formatting new list for use" '\n')
+# Move current mirrorlist to mirrorlist.old
+if os.path.isfile(old_mirror_list): 
+  os.remove(old_mirror_list)
+if os.path.isfile(main_mirror_list):
+  os.rename(main_mirror_list, old_mirror_list)
 
-with open(TEMP_LIST_1, 'r+') as f:
-    modified = re.sub('^.', '', f.read(), flags=re.MULTILINE)
-    with open(TEMP_LIST_2, 'w+') as t:
-        t.write(modified)
+file = open(main_mirror_list, "w")
+file.write(mirror_list)
+file.close()
 
-#print(cat(TEMP_LIST_2)) ## Testing -- print downloaded mirror list file
-
-# Use system app "rankmirrors" to get fastest servers
-print("Ranking the new mirror list for best servers")
-print("NOTE: This can take a few minutes..." '\n')
-subprocess.call("/usr/bin/rankmirrors -n 6 " + TEMP_LIST_2 + " > " + NEW_LIST, shell=True)
-'''
-TODO: Find a way to accomplish running "rankmirrors"
-that does not require the use of 'shell=True'
-'''
-
-# Rotate current list to mirrorlist.old
-# and new list to mirrorlist
-print("Moving current mirrorlist to \"/etc/pacman.d/mirrorlist.old\"" '\n')
-os.rename(MAIN_LIST, OLD_LIST)
-print("Moving new mirrorlist to \"/etc/pacman.d/mirrorlist\"" '\n')
-os.rename(NEW_LIST, MAIN_LIST)
-
-print("All done ;)")
-
-sys.exit()
+quit()
